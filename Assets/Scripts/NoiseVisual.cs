@@ -15,19 +15,26 @@ public class NoiseVisual : MonoBehaviour
     void Start()
     {
         weights = new float[weightsDimension * weightsDimension * weightsDimension];
-        for (int x = 0; x < weightsDimension; x++)
+
+        var offset = weightsDimension / 2;
+        for (int x = 0; x < weightsDimension - 1; x++)
         {
-            for (int y = 0; y < weightsDimension; y++)
+            for (int y = 0; y < weightsDimension - 1; y++)
             {
-                for (int z = 0; z < weightsDimension; z++)
+                for (int z = 0; z < weightsDimension - 1; z++)
                 {
-                    if (y > weightsDimension / 2)
-                        weights[cubicToLinear(x, y, z)] = 0;
+                    if (new Vector3(x - offset, y - offset, z - offset).magnitude < ((float)weightsDimension / 2))
+                    {
+                        weights[cubicToLinear(x, y, z)] = 1;
+                    }
                     else
-                        weights[cubicToLinear(x, y, z)] = (x + z) / 2;
+                    {
+                        weights[cubicToLinear(x, y, z)] = 0;
+                    }
                 }
             }
         }
+
 
         meshFilter.mesh = marchingCubes();
     }
@@ -126,10 +133,9 @@ public class NoiseVisual : MonoBehaviour
                 {
                     var index = cubicToLinear(x, y, z);
                     var weight = weights[index];
-                    Gizmos.color = weight < isoLevel ? Color.black : Color.white;
-                    //Gizmos.color = weight < isoLevel
-                    //    ? Color.Lerp(Color.black, Color.white, weight)
-                    //    : Color.Lerp(Color.white, Color.green, weight);
+                    Gizmos.color = weight < isoLevel
+                        ? Color.Lerp(Color.black, Color.yellow, weight)
+                        : Color.Lerp(Color.white, Color.green, weight);
                     Gizmos.DrawCube(new Vector3(x, y, z), Vector3.one * .2f);
                 }
             }
