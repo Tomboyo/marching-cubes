@@ -1,0 +1,89 @@
+#pragma kernel March
+
+#include "Includes/MarchingTables.hlsl"
+
+struct Triangle {
+	float3 a, b, c;
+};
+
+// Inputs
+RWStructuredBuffer<float> weights;
+float isoLevel;
+uint dimension;
+
+// Output
+AppendStructuredBuffer<Triangle> triangles;
+
+int cubicToLinear(int x, int y, int z) {
+	return (z * dimension * dimension) + (y * dimension) + x;
+}
+
+// linearly interpolate between vectors v1 and v2 by magnitude m
+float3 lerp(float3 v1, float3 v2, float m) {
+	return v1 + ((v2 - v1) * m);
+}
+
+// 512 total threads processing one 8x8x8 matrix at a time
+[numthreads(8, 8, 8)]
+void March(uint3 id: SV_DispatchThreadID) {
+	if (id.x > dimension - 1 || id.y > dimension - 1 || id.z > dimension - 1)
+		return;
+
+	float cubeWeights[8] = {
+		weights[cubicToLinear(id.x,     id.y,     id.z + 1)],
+		weights[cubicToLinear(id.x + 1, id.y,     id.z + 1)],
+		weights[cubicToLinear(id.x + 1, id.y,     id.z)],
+		weights[cubicToLinear(id.x,     id.y,     id.z)],
+		weights[cubicToLinear(id.x,     id.y + 1, id.z + 1)],
+		weights[cubicToLinear(id.x + 1, id.y + 1, id.z + 1)],
+		weights[cubicToLinear(id.x + 1, id.y + 1, id.z)],
+		weights[cubicToLinear(id.x,     id.y + 1, id.z)]
+	};
+
+	// Calculate the lookup table index. The index is synonymous with
+	// the precise configuration of points above and below the
+	// isoLevel and identifies what triangles to draw.
+	uint index = 0;
+	if (cubeWeights[0] > isoLevel) index |= 1;
+	if (cubeWeights[1] > isoLevel) index |= 2;
+	if (cubeWeights[2] > isoLevel) index |= 4;
+	if (cubeWeights[3] > isoLevel) index |= 8;
+	if (cubeWeights[4] > isoLevel) index |= 16;
+	if (cubeWeights[5] > isoLevel) index |= 32;
+	if (cubeWeights[6] > isoLevel) index |= 64;
+	if (cubeWeights[7] > isoLevel) index |= 128;
+
+	// The triangles we need to draw have their vertices along these
+	// edges of the cube. We'll pick a point in the middle, but we
+	// could also Lerp based on the distance from the isoLevel.
+	int edges[] = trianglesTable[index];
+	for (uint i = 0; edges[i] != -1; i += 3)
+	{
+		int e1[] = edgesTable[edges[i]];
+		int e2[] = edgesTable[edges[i + 1]];
+		int e3[] = edgesTable[edges[i + 2]];
+
+		// Notes on the lerp:
+		// For every edge, e[1] - e[0] is nonnegative in all dimensions.
+		// If the weights on an edge are 0 and 1 (assuming isoLevel = 0.5), we pick the midpoint.
+		// If the weights are 0.49 and 1, we pick a point very near the latter point.
+		// If the weigts are 0 and 0.51, we pick a point very near the former.
+		Triangle tri;
+		tri.a = id + lerp(
+			verticesTable[e1[0]],
+			verticesTable[e1[1]],
+			//(isoLevel - cubeWeights[e1[1]]) / (cubeWeights[e1[1]] - cubeWeights[e1[0]]));
+			0.5f);
+		tri.b = id + lerp(
+			verticesTable[e2[0]],
+			verticesTable[e2[1]],
+			//(isoLevel - cubeWeights[e2[1]]) / (cubeWeights[e2[1]] - cubeWeights[e2[0]]));
+			0.5f);
+		tri.c = id + lerp(
+			verticesTable[e3[0]],
+			verticesTable[e3[1]],
+			//(isoLevel - cubeWeights[e3[1]]) / (cubeWeights[e3[1]] - cubeWeights[e3[0]]));
+			0.5f);
+		triangles.Append(tri);
+	}
+}
