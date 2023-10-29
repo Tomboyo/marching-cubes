@@ -15,7 +15,7 @@ public class Noise
                     float v = y - (dimension / 2f);
                     float w = z - (dimension / 2f);
                     result[Coordinates.cubicToLinear(dimension, x, y, z)] =
-                        Mathf.Pow(1f - (Mathf.Sqrt(u * u + v * v + w * w) / dimension), 2);
+                        (1f - (Mathf.Sqrt(u * u + v * v + w * w) / dimension)) * 0.9f;
                 }
             }
         }

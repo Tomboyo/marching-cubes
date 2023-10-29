@@ -81,7 +81,6 @@ public class NoiseVisual : MonoBehaviour
         int[] tmp = new int[] { 0 };
         trianglesCountBuffer.GetData(tmp);
         int count = tmp[0];
-        Debug.Log($"Reading {count} triangles...");
 
         // Now we can read out the triangles
         var triangles = new Triangle[count];

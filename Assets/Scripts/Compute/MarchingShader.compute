@@ -18,9 +18,12 @@ int cubicToLinear(int x, int y, int z) {
 	return (z * dimension * dimension) + (y * dimension) + x;
 }
 
-// linearly interpolate between vectors v1 and v2 by magnitude m
-float3 lerp(float3 v1, float3 v2, float m) {
-	return v1 + ((v2 - v1) * m);
+// Returns a ratio describing how much further w1 is from the isolevel than w2.
+// When this number is large, we want to draw lines closer to w2 (the isoLevel
+// is closer to w2). This can be used as the scaling factor to bias towards w2.
+float scalingFactor(float w1, float w2) {
+	return abs(w1 - isoLevel) / (
+		abs(w2 - isoLevel) + abs(w1 - isoLevel));
 }
 
 // 512 total threads processing one 8x8x8 matrix at a time
@@ -54,36 +57,28 @@ void March(uint3 id: SV_DispatchThreadID) {
 	if (cubeWeights[7] > isoLevel) index |= 128;
 
 	// The triangles we need to draw have their vertices along these
-	// edges of the cube. We'll pick a point in the middle, but we
-	// could also Lerp based on the distance from the isoLevel.
+	// edges of the cube. We pick a point via linear interpolation.
 	int edges[] = trianglesTable[index];
 	for (uint i = 0; edges[i] != -1; i += 3)
 	{
 		int e1[] = edgesTable[edges[i]];
 		int e2[] = edgesTable[edges[i + 1]];
 		int e3[] = edgesTable[edges[i + 2]];
+		float3 one = float3(1.0, 1.0, 1.0);
 
-		// Notes on the lerp:
-		// For every edge, e[1] - e[0] is nonnegative in all dimensions.
-		// If the weights on an edge are 0 and 1 (assuming isoLevel = 0.5), we pick the midpoint.
-		// If the weights are 0.49 and 1, we pick a point very near the latter point.
-		// If the weigts are 0 and 0.51, we pick a point very near the former.
 		Triangle tri;
 		tri.a = id + lerp(
 			verticesTable[e1[0]],
 			verticesTable[e1[1]],
-			//(isoLevel - cubeWeights[e1[1]]) / (cubeWeights[e1[1]] - cubeWeights[e1[0]]));
-			0.5f);
+			one * scalingFactor(cubeWeights[e1[0]], cubeWeights[e1[1]]));
 		tri.b = id + lerp(
 			verticesTable[e2[0]],
 			verticesTable[e2[1]],
-			//(isoLevel - cubeWeights[e2[1]]) / (cubeWeights[e2[1]] - cubeWeights[e2[0]]));
-			0.5f);
+			one * scalingFactor(cubeWeights[e2[0]], cubeWeights[e2[1]]));
 		tri.c = id + lerp(
 			verticesTable[e3[0]],
 			verticesTable[e3[1]],
-			//(isoLevel - cubeWeights[e3[1]]) / (cubeWeights[e3[1]] - cubeWeights[e3[0]]));
-			0.5f);
+			one * scalingFactor(cubeWeights[e3[0]], cubeWeights[e3[1]]));
 		triangles.Append(tri);
 	}
 }
