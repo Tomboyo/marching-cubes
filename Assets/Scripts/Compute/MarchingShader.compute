@@ -2,8 +2,13 @@
 
 #include "Includes/MarchingTables.hlsl"
 
+struct Vertex {
+	int id;
+	float3 p;
+};
+
 struct Triangle {
-	float3 a, b, c;
+	int v1, v2, v3;
 };
 
 // Inputs
@@ -12,10 +17,67 @@ float isoLevel;
 uint dimension;
 
 // Output
-AppendStructuredBuffer<Triangle> triangles;
+AppendStructuredBuffer<Vertex> vertexBuffer;
+AppendStructuredBuffer<Triangle> triangleBuffer;
 
 int cubicToLinear(int x, int y, int z) {
 	return (z * dimension * dimension) + (y * dimension) + x;
+}
+
+// There are at most 5 triangles per cube and 3 vertices per triangle, which
+// lets us assign a unique ID per vertex.
+int vertexId(int edgeId, int triangleId, int x, int y, int z) {
+	return edgeId + 3 * triangleId + 15 * cubicToLinear(x, y, z);
+}
+
+Vertex vertex(int x, int y, int z, int triId, int edgeId) {
+	Vertex v;
+	// The edgeID in [0, 12) corresponds to the marching cubes table. Edges 2, 3,
+	// and 11 are treated as the edges in "this" cube, and all others are in
+	// "another" cube. E.g. edge 1 (top right) is just edge 3 in the neighboring
+	// cube.
+	// We use this to assign a unique vertex ID which lets us dedupliacate vertices
+	// CPU-side. In the future we might be able to prevent duplicate generation as
+	// well.
+	switch (edgeId) {
+	case 0:
+		v.id = vertexId(0, triId, x, y, z + 1);
+		return v;
+	case 1:
+		v.id = vertexId(1, triId, x + 1, y, z);
+		return v;
+	case 2:
+		v.id = vertexId(0, triId, x, y, z);
+		return v;
+	case 3:
+		v.id = vertexId(1, triId, x, y, z);
+		return v;
+	case 4:
+		v.id = vertexId(0, triId, x, y + 1, z + 1);
+		return v;
+	case 5:
+		v.id = vertexId(1, triId, x + 1, y + 1, z);
+		return v;
+	case 6:
+		v.id = vertexId(0, triId, x, y + 1, z);
+		return v;
+	case 7:
+		v.id = vertexId(1, triId, x, y + 1, z);
+		return v;
+	case 8:
+		v.id = vertexId(2, triId, x, y, z + 1);
+		return v;
+	case 9:
+		v.id = vertexId(2, triId, x + 1, y, z + 1);
+		return v;
+	case 10:
+		v.id = vertexId(2, triId, x + 1, y, z);
+		return v;
+	//case 11:
+	default:
+		v.id = vertexId(2, triId, x, y, z);
+		return v;
+	}
 }
 
 // Returns a ratio describing how much further w1 is from the isolevel than w2.
@@ -59,6 +121,7 @@ void March(uint3 id: SV_DispatchThreadID) {
 	// The triangles we need to draw have their vertices along these
 	// edges of the cube. We pick a point via linear interpolation.
 	int edges[] = trianglesTable[index];
+	int triIndex = 0; // ranges from 0 to at most 4
 	for (uint i = 0; edges[i] != -1; i += 3)
 	{
 		int e1[] = edgesTable[edges[i]];
@@ -66,19 +129,34 @@ void March(uint3 id: SV_DispatchThreadID) {
 		int e3[] = edgesTable[edges[i + 2]];
 		float3 one = float3(1.0, 1.0, 1.0);
 
-		Triangle tri;
-		tri.a = id + lerp(
+		Vertex a, b, c;
+		a = vertex(id.x, id.y, id.z, triIndex, edges[i]);
+		b = vertex(id.x, id.y, id.z, triIndex, edges[i + 1]);
+		c = vertex(id.x, id.y, id.z, triIndex, edges[i + 2]);
+
+		a.p = id + lerp(
 			verticesTable[e1[0]],
 			verticesTable[e1[1]],
 			one * scalingFactor(cubeWeights[e1[0]], cubeWeights[e1[1]]));
-		tri.b = id + lerp(
+		b.p = id + lerp(
 			verticesTable[e2[0]],
 			verticesTable[e2[1]],
 			one * scalingFactor(cubeWeights[e2[0]], cubeWeights[e2[1]]));
-		tri.c = id + lerp(
+		c.p = id + lerp(
 			verticesTable[e3[0]],
 			verticesTable[e3[1]],
 			one * scalingFactor(cubeWeights[e3[0]], cubeWeights[e3[1]]));
-		triangles.Append(tri);
+
+		vertexBuffer.Append(a);
+		vertexBuffer.Append(b);
+		vertexBuffer.Append(c);
+
+		Triangle t;
+		t.v1 = a.id;
+		t.v2 = b.id;
+		t.v3 = c.id;
+		triangleBuffer.Append(t);
+
+		triIndex++;
 	}
 }

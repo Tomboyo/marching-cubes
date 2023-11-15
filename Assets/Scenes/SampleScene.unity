@@ -337,8 +337,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8613a0292bea5ff4c8fb43385ac4a994, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  weightsDimension: 8
+  marchingShader: {fileID: 7200000, guid: 18e77b3196543a647848ce2c8a15c26a, type: 3}
+  weightsDimension: 64
   meshFilter: {fileID: 1267563717}
+  isoLevel: 0.5
 --- !u!4 &1267563715
 Transform:
   m_ObjectHideFlags: 0

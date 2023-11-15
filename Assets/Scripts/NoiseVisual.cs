@@ -5,16 +5,24 @@ public class NoiseVisual : MonoBehaviour
 
     public ComputeShader marchingShader;
     ComputeBuffer weightsBuffer;
-    ComputeBuffer trianglesBuffer;
-    ComputeBuffer trianglesCountBuffer;
+    ComputeBuffer vertexBuffer;
+    ComputeBuffer vertexCountBuffer;
+    ComputeBuffer triangleBuffer;
+    ComputeBuffer triangleCountBuffer;
+
+    struct Vertex
+    {
+        public int id;
+        public Vector3 p;
+
+        public static int SizeOf => sizeof(int) + sizeof(float) * 3;
+    }
 
     struct Triangle
     {
-        public Vector3 a;
-        public Vector3 b;
-        public Vector3 c;
+        public int v1, v2, v3;
 
-        public static int SizeOf => sizeof(float) * 3 * 3;
+        public static int SizeOf => sizeof(int) * 3;
     }
 
     public int weightsDimension = 8;
@@ -25,17 +33,26 @@ public class NoiseVisual : MonoBehaviour
 
     void Awake()
     {
-        // TODO: buffer stride should be a multiple of 16 per https://docs.unity3d.com/ScriptReference/ComputeBufferType.Default.html
+        // buffer stride should be a multiple of 16 per https://docs.unity3d.com/ScriptReference/ComputeBufferType.Default.html
         weightsBuffer = new ComputeBuffer(
             weightsDimension * weightsDimension * weightsDimension,
             sizeof(float));
-        // TODO: buffer stride should be a multiple of 4 per https://docs.unity3d.com/ScriptReference/ComputeBufferType.Append.html
-        trianglesBuffer = new ComputeBuffer(
+        // buffer stride should be a multiple of 4 per https://docs.unity3d.com/ScriptReference/ComputeBufferType.Append.html
+        vertexBuffer = new ComputeBuffer(
+            3 * 5 * weightsDimension * weightsDimension * weightsDimension,
+            Vertex.SizeOf,
+            ComputeBufferType.Append);
+        vertexCountBuffer = new ComputeBuffer(
+            1,
+            sizeof(int),
+            ComputeBufferType.Raw);
+        // buffer stride should be a multiple of 4 per https://docs.unity3d.com/ScriptReference/ComputeBufferType.Append.html
+        triangleBuffer = new ComputeBuffer(
             // There are at most 5 triangles per cube
             5 * weightsDimension * weightsDimension * weightsDimension,
             Triangle.SizeOf,
             ComputeBufferType.Append);
-        trianglesCountBuffer = new ComputeBuffer(
+        triangleCountBuffer = new ComputeBuffer(
             1,
             sizeof(int),
             ComputeBufferType.Raw);
@@ -44,8 +61,10 @@ public class NoiseVisual : MonoBehaviour
     void OnDestroy()
     {
         weightsBuffer.Release();
-        trianglesBuffer.Release();
-        trianglesCountBuffer.Release();
+        vertexBuffer.Release();
+        vertexCountBuffer.Release();
+        triangleBuffer.Release();
+        triangleCountBuffer.Release();
     }
 
 
@@ -63,11 +82,14 @@ public class NoiseVisual : MonoBehaviour
         marchingShader.SetBuffer(0, "weights", weightsBuffer);
         marchingShader.SetFloat("isoLevel", isoLevel);
         marchingShader.SetInt("dimension", weightsDimension);
+
         // Bind output buffer
-        marchingShader.SetBuffer(0, "triangles", trianglesBuffer);
+        marchingShader.SetBuffer(0, "vertexBuffer", vertexBuffer);
+        marchingShader.SetBuffer(0, "triangleBuffer", triangleBuffer);
 
         weightsBuffer.SetData(weights);
-        trianglesBuffer.SetCounterValue(0);
+        vertexBuffer.SetCounterValue(0);
+        triangleBuffer.SetCounterValue(0);
 
         // The shader uses numthreads(8, 8, 8), so we need one thread group per 8x8x8 subdivision of the weights.
         marchingShader.Dispatch(
@@ -76,32 +98,41 @@ public class NoiseVisual : MonoBehaviour
             weightsDimension / 8,
             weightsDimension / 8);
 
-        // Read how many triangles were appended to the triangle buffer by the shader
-        ComputeBuffer.CopyCount(trianglesBuffer, trianglesCountBuffer, 0);
-        int[] tmp = new int[] { 0 };
-        trianglesCountBuffer.GetData(tmp);
-        int count = tmp[0];
+        var vertices = new Vertex[extractCount(vertexBuffer, vertexCountBuffer)];
+        vertexBuffer.GetData(vertices);
+        var triangles = new Triangle[extractCount(triangleBuffer, triangleCountBuffer)];
+        triangleBuffer.GetData(triangles);
 
-        // Now we can read out the triangles
-        var triangles = new Triangle[count];
-        trianglesBuffer.GetData(triangles);
+        // at most 3 vertices per 5 triangles per cube
+        var meshVertices = new Vector3[3 * 5 * (weightsDimension) * (weightsDimension) * (weightsDimension)];
+        var meshTriangles = new int[3 * triangles.Length];
 
-        // Convert the buffer to a vertex array and a triangle array
-        // The triangle array's elememts are indexes into the vertex array.
-        // Every three elements describes the points of a triangle.
-        var meshVertices = new Vector3[3 * count];
-        var meshTriangles = new int[3 * count];
-        for (int i = 0; i < count; i++)
+        // The shader sends us a globally unique vertex ID per vertex which the
+        // triangles buffer uses to describe triangles. These IDs are sparse --
+        // most IDs are empty space. Rather than use each vertex ID as the mesh
+        // vertex ID directly, which wastes space, we pack the unique vertices
+        // into the array and keep a mapping from vertex ID to mesh vertex array
+        // offset. We will reference the mapping when construting the triangle
+        // mesh array.
+        var mapping = new int?[meshVertices.Length];
+        for (int i = 0, j = 0; i < vertices.Length; i++)
+        {
+            var v = vertices[i];
+            if (!mapping[v.id].HasValue)
+            {
+                mapping[v.id] = j;
+                meshVertices[j] = v.p;
+                j += 1;
+            }
+        }
+
+        for (int i = 0; i < triangles.Length; i++)
         {
             int j = 3 * i;
-
-            meshVertices[j] = triangles[i].c;
-            meshVertices[j + 1] = triangles[i].b;
-            meshVertices[j + 2] = triangles[i].a;
-
-            meshTriangles[j] = j;
-            meshTriangles[j + 1] = j + 1;
-            meshTriangles[j + 2] = j + 2;
+            var t = triangles[i];
+            meshTriangles[j] = mapping[t.v3].Value;
+            meshTriangles[j + 1] = mapping[t.v2].Value;
+            meshTriangles[j + 2] = mapping[t.v1].Value;
         }
 
         var mesh = new Mesh();
@@ -109,6 +140,14 @@ public class NoiseVisual : MonoBehaviour
         mesh.triangles = meshTriangles;
         mesh.RecalculateNormals();
         return mesh;
+    }
+
+    private int extractCount(ComputeBuffer buffer, ComputeBuffer countBuffer)
+    {
+        ComputeBuffer.CopyCount(buffer, countBuffer, 0);
+        int[] tmp = new int[] { 0 };
+        countBuffer.GetData(tmp);
+        return tmp[0];
     }
 
     private void OnDrawGizmos()
